@@ -15,7 +15,7 @@ public class Product {
         this.id = id;
         this.name = name;
         this.price = price;
-        this.description = description;
+        this.description = description != null ? description : "";
     }
 
     public Integer getId() { return id; }
@@ -25,11 +25,11 @@ public class Product {
     public BigDecimal getPrice() { return price; }
     public void setPrice(BigDecimal price) { this.price = price; }
     public String getDescription() { return description; }
-    public void setDescription(String description) { this.description = description; }
+    public void setDescription(String description) { this.description = description != null ? description : ""; }
 
     public boolean esValido() {
         return name != null && !name.isBlank() && name.length() <= 100
-            && price != null && price.signum() >= 0
+            && price != null && price.signum() >= 0 && price.precision() - price.scale() <= 10 && price.scale() <= 2
             && description != null && description.length() <= 255;
     }
 }

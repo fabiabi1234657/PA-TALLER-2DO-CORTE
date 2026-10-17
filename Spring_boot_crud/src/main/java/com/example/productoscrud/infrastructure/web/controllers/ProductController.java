@@ -19,7 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/productos")
 @CrossOrigin(origins = "*")
 public class ProductController {
-    private final ProductService productService;
+    protected final ProductService productService;
 
     public ProductController(ProductService productService) {
         this.productService = productService;

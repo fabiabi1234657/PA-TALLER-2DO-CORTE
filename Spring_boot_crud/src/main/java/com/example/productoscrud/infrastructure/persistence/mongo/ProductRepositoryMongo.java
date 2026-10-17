@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import org.bson.Document;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.MongoTemplate;
@@ -27,7 +28,7 @@ public class ProductRepositoryMongo extends ProductRepository {
 
     @PostConstruct
     public void inicializarSiVacio() {
-        // shortcut: si Mongo no responde o está apagado durante el arranque, no abortar Spring
+        // shortcut: si Mongo no responde durante el arranque, no abortar Spring
         try {
             if (mongoTemplate.collectionExists(COLLECTION) && mongoTemplate.getCollection(COLLECTION).countDocuments() > 0) {
                 return;
@@ -48,9 +49,7 @@ public class ProductRepositoryMongo extends ProductRepository {
         int id = idNum != null ? idNum.intValue() : 0;
         String name = doc.getString("name");
         Object priceObj = doc.get("price");
-        BigDecimal price = priceObj instanceof Number
-            ? BigDecimal.valueOf(((Number) priceObj).doubleValue())
-            : BigDecimal.ZERO;
+        BigDecimal price = priceObj != null ? new BigDecimal(priceObj.toString()) : BigDecimal.ZERO;
         String description = doc.getString("description");
         return new Product(id, name, price, description != null ? description : "");
     }
@@ -65,28 +64,24 @@ public class ProductRepositoryMongo extends ProductRepository {
 
     @Override
     public List<Product> listar() {
-        List<Document> pipeline = List.of(
-            new Document("$sort", new Document("id", 1))
-        );
-        return ejecutarPipeline(pipeline);
+        return ejecutarPipeline(List.of(new Document("$sort", new Document("id", 1))));
     }
 
     @Override
     public Optional<Product> buscarPorId(int id) {
-        Query query = new Query(Criteria.where("id").is(id));
-        Document doc = mongoTemplate.findOne(query, Document.class, COLLECTION);
+        Document doc = mongoTemplate.findOne(new Query(Criteria.where("id").is(id)), Document.class, COLLECTION);
         return Optional.ofNullable(mapear(doc));
     }
 
     @Override
     public Product crear(Product product) {
-        int id = product.getId() != null && product.getId() > 0 ? product.getId() : siguienteId();
+        int id = siguienteId();
         Document doc = new Document("_id", id)
             .append("id", id)
             .append("name", product.getName())
             .append("price", product.getPrice() != null ? product.getPrice().doubleValue() : 0.0)
             .append("description", product.getDescription() != null ? product.getDescription() : "");
-        mongoTemplate.save(doc, COLLECTION);
+        mongoTemplate.insert(doc, COLLECTION);
         return new Product(id, product.getName(), product.getPrice(), product.getDescription());
     }
 
@@ -97,56 +92,43 @@ public class ProductRepositoryMongo extends ProductRepository {
             .set("name", product.getName())
             .set("price", product.getPrice() != null ? product.getPrice().doubleValue() : 0.0)
             .set("description", product.getDescription() != null ? product.getDescription() : "");
-        return mongoTemplate.updateFirst(query, update, COLLECTION).getModifiedCount() > 0;
+        return mongoTemplate.updateFirst(query, update, COLLECTION).getMatchedCount() > 0;
     }
 
     @Override
     public boolean eliminar(int id) {
-        Query query = new Query(Criteria.where("id").is(id));
-        return mongoTemplate.remove(query, COLLECTION).getDeletedCount() > 0;
+        return mongoTemplate.remove(new Query(Criteria.where("id").is(id)), COLLECTION).getDeletedCount() > 0;
     }
 
-    // 1. Pipeline Rango de Precios ($match + $sort)
-    @Override
-    public List<Product> filtrarPorRangoPrecio(BigDecimal min, BigDecimal max) {
+    public static List<Document> pipelineRango(BigDecimal min, BigDecimal max) {
         double dMin = min != null ? min.doubleValue() : 0.0;
         double dMax = max != null ? max.doubleValue() : Double.MAX_VALUE;
-        List<Document> pipeline = List.of(
+        return List.of(
             new Document("$match", new Document("price", new Document("$gte", dMin).append("$lte", dMax))),
             new Document("$sort", new Document("price", 1))
         );
-        return ejecutarPipeline(pipeline);
     }
 
-    // 2. Pipeline Coincidencia de Texto en Nombre o Descripción ($match + $or + $regex + $sort)
-    @Override
-    public List<Product> filtrarPorPalabra(String texto) {
+    public static List<Document> pipelinePalabra(String texto) {
         String patron = texto != null ? Pattern.quote(texto) : "";
-        List<Document> pipeline = List.of(
+        return List.of(
             new Document("$match", new Document("$or", List.of(
                 new Document("name", new Document("$regex", patron).append("$options", "i")),
                 new Document("description", new Document("$regex", patron).append("$options", "i"))
             ))),
             new Document("$sort", new Document("name", 1))
         );
-        return ejecutarPipeline(pipeline);
     }
 
-    // 3. Pipeline Top N Productos Más Caros ($sort + $limit)
-    @Override
-    public List<Product> listarTopCaros(int limite) {
-        int lim = limite > 0 ? limite : 5;
-        List<Document> pipeline = List.of(
+    public static List<Document> pipelineTop(int limite) {
+        return List.of(
             new Document("$sort", new Document("price", -1)),
-            new Document("$limit", lim)
+            new Document("$limit", limite > 0 ? limite : 5)
         );
-        return ejecutarPipeline(pipeline);
     }
 
-    // 4. Pipeline Productos con Precio Superior al Promedio ($group + $avg + $unwind + $match + $replaceRoot + $sort)
-    @Override
-    public List<Product> filtrarMayoresAlPromedio() {
-        List<Document> pipeline = List.of(
+    public static List<Document> pipelinePromedio() {
+        return List.of(
             new Document("$group", new Document("_id", null)
                 .append("avgPrice", new Document("$avg", "$price"))
                 .append("docs", new Document("$push", "$$ROOT"))),
@@ -156,7 +138,30 @@ public class ProductRepositoryMongo extends ProductRepository {
             new Document("$replaceRoot", new Document("newRoot", "$docs")),
             new Document("$sort", new Document("price", -1))
         );
-        return ejecutarPipeline(pipeline);
+    }
+
+    public static String formatearPipeline(List<Document> pipeline) {
+        return "[\n  " + pipeline.stream().map(Document::toJson).collect(Collectors.joining(",\n  ")) + "\n]";
+    }
+
+    @Override
+    public List<Product> filtrarPorRangoPrecio(BigDecimal min, BigDecimal max) {
+        return ejecutarPipeline(pipelineRango(min, max));
+    }
+
+    @Override
+    public List<Product> filtrarPorPalabra(String texto) {
+        return ejecutarPipeline(pipelinePalabra(texto));
+    }
+
+    @Override
+    public List<Product> listarTopCaros(int limite) {
+        return ejecutarPipeline(pipelineTop(limite));
+    }
+
+    @Override
+    public List<Product> filtrarMayoresAlPromedio() {
+        return ejecutarPipeline(pipelinePromedio());
     }
 
     private List<Product> ejecutarPipeline(List<Document> pipeline) {

@@ -10,41 +10,48 @@ import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
 
 public class NoSqlLogicTest {
 
     static class MockNoSqlRepository extends ProductRepository {
-        @Override public List<Product> listar() { return List.of(new Product(1, "Teclado", new BigDecimal("100"), "Gamer")); }
+        @Override public List<Product> listar() { return List.of(new Product(1, "Teclado", new BigDecimal("100.00"), "Gamer")); }
         @Override public Optional<Product> buscarPorId(int id) { return Optional.empty(); }
         @Override public Product crear(Product product) { return product; }
         @Override public boolean actualizar(int id, Product product) { return true; }
         @Override public boolean eliminar(int id) { return true; }
 
-        @Override
-        public List<Product> filtrarPorRangoPrecio(BigDecimal min, BigDecimal max) {
-            return List.of(new Product(1, "Teclado", new BigDecimal("100"), "Gamer"));
-        }
-        @Override
-        public List<Product> filtrarPorPalabra(String texto) {
-            return List.of(new Product(1, "Teclado", new BigDecimal("100"), "Gamer"));
-        }
-        @Override
-        public List<Product> listarTopCaros(int limite) {
-            return List.of(new Product(1, "Teclado", new BigDecimal("100"), "Gamer"));
-        }
-        @Override
-        public List<Product> filtrarMayoresAlPromedio() {
-            return List.of(new Product(1, "Teclado", new BigDecimal("100"), "Gamer"));
-        }
+        @Override public List<Product> filtrarPorRangoPrecio(BigDecimal min, BigDecimal max) { return listar(); }
+        @Override public List<Product> filtrarPorPalabra(String texto) { return listar(); }
+        @Override public List<Product> listarTopCaros(int limite) { return listar(); }
+        @Override public List<Product> filtrarMayoresAlPromedio() { return listar(); }
     }
 
     @Test
-    void testProductValidation() {
-        Product valido = new Product(1, "Monitor", new BigDecimal("500"), "27 pulgadas");
-        Assertions.assertTrue(valido.esValido());
+    void testProductValidationAndNullDescription() {
+        Product validoSinDesc = new Product(1, "Monitor", new BigDecimal("500.00"), null);
+        Assertions.assertEquals("", validoSinDesc.getDescription());
+        Assertions.assertTrue(validoSinDesc.esValido());
 
-        Product invalido = new Product(2, "", new BigDecimal("-10"), null);
-        Assertions.assertFalse(invalido.esValido());
+        validoSinDesc.setDescription(null);
+        Assertions.assertEquals("", validoSinDesc.getDescription());
+        Assertions.assertTrue(validoSinDesc.esValido());
+
+        Product precioExcesivo = new Product(2, "Servidor", new BigDecimal("99999999999.99"), "11 enteros");
+        Assertions.assertFalse(precioExcesivo.esValido());
+
+        Product demasiadosDecimales = new Product(3, "Cable", new BigDecimal("10.999"), "3 decimales");
+        Assertions.assertFalse(demasiadosDecimales.esValido());
+    }
+
+    @Test
+    void testControllerRejectsInvalidProductWith400() {
+        ProductService service = new ProductService(new MockNoSqlRepository());
+        ProductNoSqlController controller = new ProductNoSqlController(service);
+
+        Product invalido = new Product(null, "", new BigDecimal("-10"), "Inválido");
+        Assertions.assertEquals(HttpStatus.BAD_REQUEST, controller.crear(invalido).getStatusCode());
+        Assertions.assertEquals(HttpStatus.BAD_REQUEST, controller.actualizar(1, invalido).getStatusCode());
     }
 
     @Test
@@ -53,7 +60,6 @@ public class NoSqlLogicTest {
         ProductNoSqlController controller = new ProductNoSqlController(service);
 
         Map<String, Object> rango = controller.filtrarPorRango(new BigDecimal("50"), new BigDecimal("200"));
-        Assertions.assertTrue(rango.containsKey("pipeline"));
         Assertions.assertTrue(rango.get("pipeline").toString().contains("$match"));
         Assertions.assertTrue(rango.get("pipeline").toString().contains("$gte"));
 
