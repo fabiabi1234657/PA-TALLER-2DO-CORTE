@@ -1,0 +1,23 @@
+# Build & Output
+target/
+**/target/
+dist/
+**/dist/
+node_modules/
+**/node_modules/
+
+# Graphify & Local tooling
+graphify-out/
+.graphify*
+
+# IDE & OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Environment & logs
+*.log
+.env.local
+.env.*.local
